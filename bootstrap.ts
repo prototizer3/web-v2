@@ -12,12 +12,24 @@ consola.info("Bootstrapping TerbiumOS [v" + version + "]");
 
 export default async function Bootstrap() {
 	const args = process.argv;
+	const isAppsOnly = args.includes("--apps-only");
+	const isDev = args.includes("--dev");
+	const isCI = process.env.CI === "true" || !process.stdin.isTTY;
+
 	await BuildApps();
 	await CreateAppsPaths();
-	if (!fs.existsSync(".env")) await CreateEnv();
-	await Updater();
+
+	if (!isCI && !fs.existsSync(".env")) {
+		await CreateEnv();
+	}
+
+	if (!isCI) {
+		await Updater();
+	}
+
 	consola.success("TerbiumOS bootstrapped successfully");
-	if (!(args.includes("--apps-only") || args.includes("--dev"))) {
+
+	if (!(isAppsOnly || isDev)) {
 		TServer();
 	}
 }
@@ -142,6 +154,11 @@ export async function CreateAppsPaths() {
 }
 
 export async function CreateEnv() {
+	if (!process.stdin.isTTY || process.env.CI === "true") {
+		consola.info("Skipping environment file creation in CI/non-interactive mode");
+		return true;
+	}
+
 	const port =
 		(await consola.prompt("Enter a port for the server to run on (3000): ", {
 			type: "text",
@@ -149,38 +166,62 @@ export async function CreateEnv() {
 			placeholder: "3000",
 			cancel: "default",
 		})) || 3000;
+
 	const masqr = await consola.prompt("Enable Masqr? (no): ", {
 		type: "text",
 		default: "false",
 		placeholder: "no",
 		cancel: "default",
 	});
+
 	if (masqr === "no" || masqr === "false" || masqr === "n") {
 		fs.writeFileSync(".env", `MASQR=${false}\nPORT=${port}`);
 	} else {
 		const licenseServer = (await consola.prompt("Enter the masqr license server URL: ")) || "";
-		const whitelist = (await consola.prompt("Enter a comma separated array of domains to whitelist (Ex: ['https://balls.com', 'https://tomp.app']): ")) || [];
-		fs.writeFileSync(".env", `MASQR=${true}\nPORT=${port}\nLICENSE_SERVER_URL=${licenseServer}\nWHITELISTED_DOMAINS=${whitelist}\n`);
+		const whitelist =
+			(await consola.prompt(
+				"Enter a comma separated array of domains to whitelist (Ex: ['https://balls.com', 'https://tomp.app']): ",
+			)) || [];
+		fs.writeFileSync(
+			".env",
+			`MASQR=${true}\nPORT=${port}\nLICENSE_SERVER_URL=${licenseServer}\nWHITELISTED_DOMAINS=${whitelist}\n`,
+		);
 	}
+
 	consola.success("Environment file created");
 	return true;
 }
 
 export async function Updater() {
+	if (!process.stdin.isTTY || process.env.CI === "true") {
+		consola.info("Skipping update check in CI/non-interactive mode");
+		return true;
+	}
+
 	consola.start("Checking for updates...");
 	exec("git remote get-url origin", async (remoteError, remoteStdout, remoteStderr) => {
 		if (remoteError || remoteStderr) {
 			consola.error("Failed to get local repository URL");
 			return;
 		}
-		const repo = `https://raw.githubusercontent.com/${remoteStdout.trim().replace("https://github.com/", "").replace(".git", "")}/refs/heads/main/package.json` || "https://raw.githubusercontent.com/TerbiumOS/web-v2/refs/heads/main/package.json";
+
+		const repo =
+			`https://raw.githubusercontent.com/${remoteStdout
+				.trim()
+				.replace("https://github.com/", "")
+				.replace(".git", "")}/refs/heads/main/package.json` ||
+			"https://raw.githubusercontent.com/TerbiumOS/web-v2/refs/heads/main/package.json";
+
 		try {
 			const response = await fetch(repo);
 			const ver = (await response.json()).version;
+
 			if (ver > version) {
-				const res = await consola.prompt(`A new version of Terbium is available. Would you like to download it? (New Version: ${ver}, Current: ${version})`, {
-					type: "confirm",
-				});
+				const res = await consola.prompt(
+					`A new version of Terbium is available. Would you like to download it? (New Version: ${ver}, Current: ${version})`,
+					{ type: "confirm" },
+				);
+
 				if (res) {
 					consola.info("Downloading new version...");
 					exec("git pull", async (remoteError, remoteStdout, remoteStderr) => {
@@ -202,6 +243,7 @@ export async function Updater() {
 			consola.error(`Failed to check for updates, ${e}`);
 		}
 	});
+
 	return true;
 }
 
